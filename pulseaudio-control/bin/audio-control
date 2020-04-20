@@ -1,0 +1,180 @@
+#!/bin/bash
+
+CONFIG_DIR="$(dirname "$(readlink -f "$0")")/../etc"
+
+main() {
+	verify_command_exists pacmd
+	verify_command_exists pactl
+	verify_command_exists yq
+
+	case "$1" in
+		change) set_combination "$2" "$3" ;;
+		toggle) toggle "$2" ;;
+		*) usage
+	esac
+}
+
+# Prints usage
+usage() {
+	echo -n "$(basename $0) <COMMAND> [ARGS...]
+
+This script switches or toggles pulseuadio sinks & sources.
+
+Commands:
+  * change - Changes sink & source to defined combination
+             Usage:
+               $(basename $0) change <config> <combination>
+  * toggle - Toggles sink & source to next combination
+             Usage:
+               $(basename $0) toggle <config> <combination>
+"
+}
+
+# Verifies that given command exists, and exits the script if not found.
+#
+# $1 - Command name
+verify_command_exists() {
+	if ! which $1 2>&1 >/dev/null; then
+		echo "Command $1 not found" 2>/dev/null
+		exit 1
+	fi
+}
+
+# Switches to pulseaudio sink & source defined in given combination.
+#
+# $1 - Config name
+# $2 - Combination name
+set_combination() {
+	verify_config_exists $1
+	set_sink $(config_get_sink $1 $2)
+	set_source $(config_get_source $1 $2)
+	notify-send -i $(config_get_icon $1 $2) "$(config_get_message $1 $2)"
+}
+
+# Toggles pulseaudio sink & source to next combination.
+#
+# $1 - Config name
+toggle() {
+	local CURRENT_SINK=$(get_default_sink)
+	local CURRENT_INDEX=NULL
+	local COMBINATIONS=$(config_get_combinations $1)
+	local COMBINATIONS_LENGTH=$(echo "$COMBINATIONS" | wc -l)
+
+	while read index combination; do
+		if [[ "$CURRENT_SINK" == "$(config_get_sink $1 $combination)" ]]; then
+			CURRENT_INDEX=$index
+		fi
+	done <<<$(echo "$COMBINATIONS" | nl)
+	local NEXT_INDEX=$((CURRENT_INDEX + 1))
+	if (( NEXT_INDEX > COMBINATIONS_LENGTH )); then
+		local NEXT_INDEX=1
+	fi
+	local NEXT_COMBINATION=$(echo "$COMBINATIONS" | sed -n "${NEXT_INDEX}p")
+	set_combination $1 $NEXT_COMBINATION
+}
+
+# Switches to pulseaudio sink (e.g. speakers).
+#
+# $1 - Sink name
+set_sink() {
+	pacmd set-default-sink $1
+	move_sink_inputs $1
+}
+
+# Switches to pulseaudio source (e.g. microphone).
+#
+# $1 - Source name
+set_source() {
+	if [ -z $1 ]; then
+		return
+	fi
+	pacmd set-default-source $1
+	pacmd set-source-volume $1 65536
+	move_source_outputs $1
+}
+
+# Moves sink inputs (e.g. from music player) to given sink.
+#
+# $1 - Sink name
+move_sink_inputs() {
+	pacmd list-sink-inputs | grep index | while read line; do
+		local INDEX=$(echo $line | cut -f2 -d' ')
+		echo "Moving input $INDEX to $1"
+		pacmd move-sink-input $INDEX $1
+	done
+}
+
+# Moves source outputs (e.g. to voice recorder) to given source.
+#
+# $1 - Sink name
+move_source_outputs() {
+	pacmd list-source-outputs | grep index | while read line; do
+		local INDEX=$(echo $line | cut -f2 -d' ')
+		echo "Moving output $INDEX to $1"
+		pacmd move-source-output $INDEX $1
+	done
+}
+
+# Returns name of the current default (=fallback) sink.
+get_default_sink() {
+	local INDEX=$(pacmd list-sinks | grep '* index' | cut -f5 -d' ')
+	pactl list short sinks | grep "^$INDEX" | cut -f2
+}
+
+# Verifies that given config exists, and exits the script if not found.
+#
+# $1 - Config name
+verify_config_exists() {
+	if [[ ! -f $(get_config_path $1) ]]; then
+		echo "\"$(get_config_path $1)\" not found" 2>/dev/null
+		exit 1
+	fi
+}
+
+# Returns absolute path to the config file.
+#
+# $1 - Config name
+get_config_path() {
+	realpath "$CONFIG_DIR/$1.yaml"
+}
+
+# Returns list of combinations in a config file spearated by a newline.
+#
+# $1 - Config name
+config_get_combinations() {
+	yq r "$(get_config_path $1)" combinations | yq r - '*' -pp
+}
+
+# Returns selected combination's sink name.
+#
+# $1 - Config name
+# $2 - Combination name
+config_get_sink() {
+	yq r "$(get_config_path $1)" "combinations.$2.sink"
+}
+
+# Returns selected combination's source name.
+#
+# $1 - Config name
+# $2 - Combination name
+config_get_source() {
+	yq r "$(get_config_path $1)" "combinations.$2.source"
+}
+
+# Returns selected combination's icon name (used in DE notification).
+#
+# $1 - Config name
+# $2 - Combination name
+config_get_icon() {
+	yq r "$(get_config_path $1)" "combinations.$2.icon"
+}
+
+# Returns selected combination's message (used in DE notification).
+#
+# $1 - Config name
+# $2 - Combination name
+config_get_message() {
+	yq r "$(get_config_path $1)" "combinations.$2.message"
+}
+
+main "$@"
