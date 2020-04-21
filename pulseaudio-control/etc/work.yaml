@@ -1,0 +1,14 @@
+combinations:
+  music:
+    sink: bluez_sink.38_18_4C_BE_37_78.a2dp_sink
+    source: alsa_input.pci-0000_00_1f.3.analog-stereo
+    profile: bluez_card.38_18_4C_BE_37_78 a2dp_sink
+    icon: audio-speakers
+    message: Käytetään Sony WH-1000XM3 kuulokkeita A2DP profiililla + läppärin mikkiä
+
+  voice:
+    sink: bluez_sink.38_18_4C_BE_37_78.headset_head_unit
+    source: bluez_source.38_18_4C_BE_37_78.headset_head_unit
+    profile: bluez_card.38_18_4C_BE_37_78 headset_head_unit
+    icon: audio-headset
+    message: Käytetään Sony WH-1000XM3 kuulokemikkiä HSP/HFP profiililla
