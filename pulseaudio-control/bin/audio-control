@@ -1,219 +1,212 @@
-#!/bin/bash
+#!/bin/env python3
 
-CONFIG_DIR="$(dirname "$(readlink -f "$0")")/../etc"
+import sys
+import os
+import subprocess
+import yaml
+import re
+import hashlib
 
-main() {
-	verify_command_exists pacmd
-	verify_command_exists pactl
-	verify_command_exists yq
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+CONFIG_DIR = os.path.realpath(os.path.join(SCRIPT_DIR, "..", "etc"))
+SCRIPT_NAME = os.path.basename(sys.argv[0])
 
-	case "$1" in
-		change) set_combination "$2" "$3" ;;
-		toggle) toggle "$2" ;;
-		*) usage
-	esac
-}
+def main():
+	if len(sys.argv) == 1:
+		return usage()
+	command = sys.argv[1]
+	if command == 'change':
+		return change()
+	elif command == 'toggle':
+		return toggle()
+	return usage()
 
 # Prints usage
-usage() {
-	echo -n "$(basename $0) <COMMAND> [ARGS...]
+def usage():
+	print(f"""{SCRIPT_NAME} <COMMAND> [ARGS...]
 
 This script switches or toggles pulseuadio sinks & sources.
 
 Commands:
   * change - Changes sink & source to defined combination
              Usage:
-               $(basename $0) change <config> <combination>
+               {SCRIPT_NAME} change <config> <combination>
   * toggle - Toggles sink & source to next combination
              Usage:
-               $(basename $0) toggle <config> <combination>
-"
-}
-
-# Verifies that given command exists, and exits the script if not found.
-#
-# $1 - Command name
-verify_command_exists() {
-	if ! which $1 2>&1 >/dev/null; then
-		echo "Command $1 not found" 2>/dev/null
-		exit 1
-	fi
-}
+               {SCRIPT_NAME} toggle <config> <combination>
+""")
 
 # Switches to pulseaudio sink & source defined in given combination.
 #
 # $1 - Config name
 # $2 - Combination name
-set_combination() {
-	verify_config_exists $1
-	set_profile $(config_get_profile $1 $2)
-	set_sink $(config_get_sink $1 $2)
-	set_source $(config_get_source $1 $2)
-	set_source_volume $(config_get_source $1 $2) $(config_get_source_volume $1 $2)
-	notify-send -i $(config_get_icon $1 $2) -u low "Audio Control" "$(config_get_message $1 $2)"
-}
+def change():
+	if len(sys.argv) != 4:
+		return usage()
+	return set_combination(sys.argv[2], sys.argv[3])
 
 # Toggles pulseaudio sink & source to next combination.
 #
 # $1 - Config name
-toggle() {
-	local CURRENT_SINK=$(get_default_sink)
-	local CURRENT_INDEX=NULL
-	local COMBINATIONS=$(config_get_combinations $1)
-	local COMBINATIONS_LENGTH=$(echo "$COMBINATIONS" | wc -l)
+def toggle():
+	if len(sys.argv) != 3:
+		return usage()
+	config_name = sys.argv[2]
+	hexhash = pa_get_current_state_hash()
+	index = config_get_hash_index(config_name, hexhash)
+	new_index = 0 if index is None else index + 1
+	combination_name = config_get_index_combination(config_name, new_index)
+	set_combination(config_name, combination_name)
 
-	while read index combination; do
-		if [[ "$CURRENT_SINK" == "$(config_get_sink $1 $combination)" ]]; then
-			CURRENT_INDEX=$index
-		fi
-	done <<<$(echo "$COMBINATIONS" | nl)
-	local NEXT_INDEX=$((CURRENT_INDEX + 1))
-	if (( NEXT_INDEX > COMBINATIONS_LENGTH )); then
-		local NEXT_INDEX=1
-	fi
-	local NEXT_COMBINATION=$(echo "$COMBINATIONS" | sed -n "${NEXT_INDEX}p")
-	set_combination $1 $NEXT_COMBINATION
-}
+###############################################################################
 
-# Switches to pulseaudio sink (e.g. speakers).
-#
-# $1 - Sink name
-set_sink() {
-	pacmd set-default-sink $1
-	move_sink_inputs $1
-}
-
-# Switches to pulseaudio source (e.g. microphone).
-#
-# $1 - Source name
-set_source() {
-	if [ -z $1 ]; then
-		return
-	fi
-	pacmd set-default-source $1
-	move_source_outputs $1
-}
-
-# Switches to pulseaudio source (e.g. microphone).
-#
-# $1 - Source name
-# $2 - Source volume
-set_source_volume() {
-	if [ -z $2 ]; then
-		return
-	fi
-	pacmd set-source-volume $1 $2
-}
-
-# Switches to pulseaudio profile (e.g. A2DP or HSP/HFP).
-#
-# $1 - Card name
-# $2 - Profile name
-set_profile() {
-	if [ -z $1 ]; then
-		return
-	fi
-	pactl set-card-profile $1 $2
-}
-
-# Moves sink inputs (e.g. from music player) to given sink.
-#
-# $1 - Sink name
-move_sink_inputs() {
-	pacmd list-sink-inputs | grep index | while read line; do
-		local INDEX=$(echo $line | cut -f2 -d' ')
-		echo "Moving input $INDEX to $1"
-		pacmd move-sink-input $INDEX $1
-	done
-}
-
-# Moves source outputs (e.g. to voice recorder) to given source.
-#
-# $1 - Sink name
-move_source_outputs() {
-	pacmd list-source-outputs | grep index | while read line; do
-		local INDEX=$(echo $line | cut -f2 -d' ')
-		echo "Moving output $INDEX to $1"
-		pacmd move-source-output $INDEX $1
-	done
-}
-
-# Returns name of the current default (=fallback) sink.
-get_default_sink() {
-	local INDEX=$(pacmd list-sinks | grep '* index' | cut -f5 -d' ')
-	pactl list short sinks | grep "^$INDEX" | cut -f2
-}
-
-# Verifies that given config exists, and exits the script if not found.
+# Switches to pulseaudio sink & source defined in given combination.
 #
 # $1 - Config name
-verify_config_exists() {
-	if [[ ! -f $(get_config_path $1) ]]; then
-		echo "\"$(get_config_path $1)\" not found" 2>/dev/null
-		exit 1
-	fi
-}
+# $2 - Combination name
+def set_combination(config_name, combination_name):
+	verify_config_exists(config_name)
+	pa_set_profile(*config_get_profile(config_name, combination_name))
+	pa_set_sink(config_get_sink(config_name, combination_name))
+	pa_set_source(config_get_source(config_name, combination_name))
+	pa_set_source_volume(config_get_source(config_name, combination_name), config_get_source_volume(config_name, combination_name))
+	send_notification(config_name, combination_name)
 
-# Returns absolute path to the config file.
-#
-# $1 - Config name
-get_config_path() {
-	realpath "$CONFIG_DIR/$1.yaml"
-}
+def send_notification(config_name, combination_name):
+	icon = config_get_icon(config_name, combination_name)
+	message = config_get_message(config_name, combination_name)
+	call_process(["notify-send", "-i", icon, "-u", "low", "Audio Control", message])
 
-# Returns list of combinations in a config file spearated by a newline.
-#
-# $1 - Config name
-config_get_combinations() {
-	yq r "$(get_config_path $1)" combinations | yq r - '*' -pp
-}
+###############################################################################
+
+def config_get_hash_index(config_name, hexhash):
+	combinations = config_read(config_name)["combinations"]
+	for i, key in enumerate(combinations.keys()):
+		hash = build_hash(combinations[key]["sink"], combinations[key]["source"])
+		if hash == hexhash:
+			return i
+	return None
+
+def config_get_index_combination(config_name, index):
+	combinations = config_read(config_name)["combinations"]
+	if index >= len(combinations):
+		index = 0
+	for i, key in enumerate(combinations.keys()):
+		if i == index:
+			return key
+
+# Returns selected combination's profile.
+def config_get_profile(config_name, combination_name):
+	value = config_read(config_name)["combinations"][combination_name].get("profile", None)
+	return [None, None] if value is None else value.split(" ")
 
 # Returns selected combination's sink name.
-#
-# $1 - Config name
-# $2 - Combination name
-config_get_sink() {
-	yq r "$(get_config_path $1)" "combinations.$2.sink"
-}
+def config_get_sink(config_name, combination_name):
+	return config_read(config_name)["combinations"][combination_name].get("sink", None)
 
 # Returns selected combination's source name.
-#
-# $1 - Config name
-# $2 - Combination name
-config_get_source() {
-	yq r "$(get_config_path $1)" "combinations.$2.source"
-}
+def config_get_source(config_name, combination_name):
+	return config_read(config_name)["combinations"][combination_name].get("source", None)
 
-# Returns selected combination's source name.
-#
-# $1 - Config name
-# $2 - Combination name
-config_get_source_volume() {
-	yq r "$(get_config_path $1)" "combinations.$2.source_volume"
-}
-
-# Returns selected combination's source name.
-#
-# $1 - Config name
-# $2 - Combination name
-config_get_profile() {
-	yq r "$(get_config_path $1)" "combinations.$2.profile"
-}
+# Returns selected combination's source volume.
+def config_get_source_volume(config_name, combination_name):
+	value = config_read(config_name)["combinations"][combination_name].get("source_volume", None)
+	return None if value is None else f"{value}"
 
 # Returns selected combination's icon name (used in DE notification).
-#
-# $1 - Config name
-# $2 - Combination name
-config_get_icon() {
-	yq r "$(get_config_path $1)" "combinations.$2.icon"
-}
+def config_get_icon(config_name, combination_name):
+	return config_read(config_name)["combinations"][combination_name].get("icon", None)
 
 # Returns selected combination's message (used in DE notification).
-#
-# $1 - Config name
-# $2 - Combination name
-config_get_message() {
-	yq r "$(get_config_path $1)" "combinations.$2.message"
-}
+def config_get_message(config_name, combination_name):
+	return config_read(config_name)["combinations"][combination_name].get("message", None)
 
-main "$@"
+def config_read(config_name):
+	with open(get_config_path(config_name), "r") as file:
+		return yaml.safe_load(file)
+
+# Returns absolute path to the config file.
+def get_config_path(config_name):
+	return os.path.join(CONFIG_DIR, f"{config_name}.yaml")
+
+# Verifies that given config exists, and exits the script if not found.
+def verify_config_exists(config_name):
+	assert os.path.isfile(get_config_path(config_name)), f"Config {config_name} does not exist"
+
+###############################################################################
+
+def pa_get_current_state_hash():
+	sink_name = pa_get_default_sink()
+	source_name = pa_get_default_source()
+	return build_hash(sink_name, source_name)
+
+# Returns name of the current default (=fallback) sink.
+def pa_get_default_sink():
+	result = call_process(["pacmd", "list-sinks"])
+	match = re.search(r"\* index: ([0-9]+)", result)
+	index = match.group(1)
+	result = call_process(["pactl", "list", "short", "sinks"])
+	match = re.search(rf"^{index}\s+([^\s]+)", result, re.MULTILINE)
+	return match.group(1)
+
+def pa_get_default_source():
+	result = call_process(["pacmd", "list-sources"])
+	match = re.search(r"\* index: ([0-9]+)", result)
+	index = match.group(1)
+	result = call_process(["pactl", "list", "short", "sources"])
+	match = re.search(rf"^{index}\s+([^\s]+)", result, re.MULTILINE)
+	return match.group(1)
+
+# Switches to pulseaudio profile (e.g. A2DP or HSP/HFP).
+def pa_set_profile(card_name, profile_name):
+	if card_name is None or profile_name is None:
+		return
+	call_process(["pactl", "set-card-profile", card_name, profile_name])
+
+# Switches to pulseaudio sink (e.g. speakers).
+def pa_set_sink(sink_name):
+	if sink_name is None:
+		return
+	call_process(["pacmd", "set-default-sink", sink_name])
+	result = call_process(["pacmd", "list-sink-inputs", sink_name])
+	for line in result:
+		match = re.search(r"^\s*index: ([0-9]+)", line, re.MULTILINE)
+		if match:
+			index = match.group(1)
+			print(f"Moving input {index} to {sink_name}")
+			call_process(["pacmd", "move-sink-input", index, sink_name])
+
+# Switches to pulseaudio source (e.g. microphone).
+def pa_set_source(source_name):
+	if source_name is None:
+		return
+	call_process(["pacmd", "set-default-source", source_name])
+	result = call_process(["pacmd", "list-source-outputs", source_name])
+	for line in result:
+		match = re.search(r"^\s*index: ([0-9]+)", line, re.MULTILINE)
+		if match:
+			index = match.group(1)
+			print(f"Moving output {index} to {source_name}")
+			call_process(["pacmd", "move-source-output", index, source_name])
+
+# Sets source's volume.
+def pa_set_source_volume(source_name, source_volume):
+	if source_name is None or source_volume is None:
+		return
+	call_process(["pacmd", "set-source-volume", source_name, source_volume])
+
+###############################################################################
+
+def build_hash(sink_name, source_name):
+	hash = hashlib.md5()
+	hash.update(sink_name.encode('utf8'))
+	hash.update(source_name.encode('utf8'))
+	return hash.hexdigest()
+
+def call_process(args):
+	result = subprocess.run(args, capture_output=True)
+	if (result.returncode != 0):
+		raise RuntimeError(result.stderr.decode('utf8'))
+	return result.stdout.decode('utf8')
+
+sys.exit(main())
