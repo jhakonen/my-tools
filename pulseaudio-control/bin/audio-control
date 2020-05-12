@@ -66,10 +66,19 @@ def toggle():
 # $2 - Combination name
 def set_combination(config_name, combination_name):
 	verify_config_exists(config_name)
+	source_name = config_get_source(config_name, combination_name)
+
+	# Try to move outputs to next source (in case it already exists), this
+	# fixes Firefox stopping audio recording on profile switch
+	try:
+		pa_move_outputs_to_source(source_name)
+	except RuntimeError:
+		pass
+
 	pa_set_profile(*config_get_profile(config_name, combination_name))
 	pa_set_sink(config_get_sink(config_name, combination_name))
-	pa_set_source(config_get_source(config_name, combination_name))
-	pa_set_source_volume(config_get_source(config_name, combination_name), config_get_source_volume(config_name, combination_name))
+	pa_set_source(source_name)
+	pa_set_source_volume(source_name, config_get_source_volume(config_name, combination_name))
 	send_notification(config_name, combination_name)
 
 def send_notification(config_name, combination_name):
@@ -181,6 +190,9 @@ def pa_set_source(source_name):
 	if source_name is None:
 		return
 	call_process(["pacmd", "set-default-source", source_name])
+	pa_move_outputs_to_source(source_name)
+
+def pa_move_outputs_to_source(source_name):
 	result = call_process(["pacmd", "list-source-outputs", source_name])
 	for line in result:
 		match = re.search(r"^\s*index: ([0-9]+)", line, re.MULTILINE)
