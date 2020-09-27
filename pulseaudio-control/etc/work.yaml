@@ -1,15 +1,23 @@
 combinations:
   music:
-    sink: combined
+    sink: bluez_sink.38_18_4C_BE_37_78.a2dp_sink
     source: source.null
     profile: bluez_card.38_18_4C_BE_37_78 a2dp_sink
     icon: audio-speakers
-    message: Käytetään Sony WH-1000XM3 kuulokkeita A2DP profiililla ilman mikkiä
+    message: Sony WH-1000XM3 kuulokkeet A2DP profiililla
 
-  voice:
-    sink: combined
+  voice-headset:
+    sink: bluez_sink.38_18_4C_BE_37_78.headset_head_unit
     source: bluez_source.38_18_4C_BE_37_78.headset_head_unit
     source_volume: 65536
     profile: bluez_card.38_18_4C_BE_37_78 headset_head_unit
     icon: audio-headset
-    message: Käytetään Sony WH-1000XM3 kuulokemikkiä HSP/HFP profiililla
+    message: Sony WH-1000XM3 kuulokemikki HSP/HFP profiililla
+
+  voice-logitech-webcam:
+    sink: bluez_sink.38_18_4C_BE_37_78.a2dp_sink
+    source: alsa_input.usb-046d_HD_Pro_Webcam_C920_AF6A0BDF-02.analog-stereo
+    source_volume: 65536
+    profile: bluez_card.38_18_4C_BE_37_78 a2dp_sink
+    icon: camera-web
+    message: Sony WH-1000XM3 kuulokkeet ja Logitech webcamin mikki
