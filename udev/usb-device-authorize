@@ -1,0 +1,15 @@
+#!/bin/bash
+if [ -z "$1" ]; then
+    echo "Device id not given"
+    exit 1
+fi
+if [ -z "$2" ]; then
+    echo "Authorize state not given (use 0 or 1)"
+    exit 1
+fi
+DEVICEPATH=$(usb-device-path-by-id $1)
+if [ $? -ne 0 ]; then
+    echo "Device $1 not found" 1>&2
+    exit 1
+fi
+echo $2 > "$DEVICEPATH/authorized"

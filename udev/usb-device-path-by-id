@@ -1,0 +1,15 @@
+#!/bin/bash
+INPUT=$1
+IDS=(${INPUT//:/ })
+VENDOR=${IDS[0]}
+PRODUCT=${IDS[1]}
+for DEVICEPATH in /sys/bus/usb/devices/*; do
+  if [ -e "$DEVICEPATH/idVendor" ] && [ -e "$DEVICEPATH/idProduct" ]; then
+        if [ $(cat "$DEVICEPATH/idVendor" 2>/dev/null) == "$VENDOR" ] && \
+           [ $(cat "$DEVICEPATH/idProduct" 2>/dev/null) == "$PRODUCT" ]; then
+           echo $DEVICEPATH
+           exit 0
+        fi
+    fi
+done
+exit 1
