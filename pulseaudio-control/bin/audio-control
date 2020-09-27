@@ -54,6 +54,8 @@ def toggle():
 	config_name = sys.argv[2]
 	hexhash = pa_get_current_state_hash()
 	index = config_get_hash_index(config_name, hexhash)
+	if index is None:
+		call_notify_send(f"Varoitus: Nykyistä yhdistelmää ei löytynyt asetuksista ({pa_get_default_sink()}, {pa_get_default_source()})")
 	new_index = 0 if index is None else index + 1
 	combination_name = config_get_index_combination(config_name, new_index)
 	set_combination(config_name, combination_name)
@@ -84,7 +86,14 @@ def set_combination(config_name, combination_name):
 def send_notification(config_name, combination_name):
 	icon = config_get_icon(config_name, combination_name)
 	message = config_get_message(config_name, combination_name)
-	call_process(["notify-send", "-i", icon, "-u", "low", "Audio Control", message])
+	call_notify_send(message, icon)
+
+def call_notify_send(message, icon=None):
+	params = ["notify-send"]
+	if icon:
+		params.extend(["-i", icon])
+	params.extend(["-u", "low", "Audio Control", message])
+	call_process(params)
 
 ###############################################################################
 
